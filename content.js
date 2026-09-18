@@ -11978,7 +11978,9 @@ async function createDialog() {
     function getToolDefinitionsForRequest({ includePageTools = true, includeWebSearch = false } = {}) {
         const annotateRisk = (tool) => {
             const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(tool.name);
-            if (!policy) return tool;
+            if (!policy) {
+                return tool;
+            }
             return {
                 ...tool,
                 description: `[tool-risk: ${policy.risk}] ${tool.description}`
