@@ -11669,7 +11669,7 @@ async function createDialog() {
         const cancellationContext = toolContext.task || toolContext.signal;
         throwIfAskTaskCancelled(cancellationContext);
         const toolArgs = args && typeof args === 'object' ? args : {};
-        const toolPolicy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name) || null;
+        const toolPolicy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name, toolArgs) || null;
         console.log('[AskPage] Executing tool:', name, toolArgs, toolPolicy ? { risk: toolPolicy.risk } : '');
 
         if (toolArgs._parseError) {
