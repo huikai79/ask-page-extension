@@ -11665,7 +11665,7 @@ async function createDialog() {
         });
     }
 
-    async function executeToolCall({ id = '', name = '', args = {} }, toolContext = {}) {
+    async function executeToolCallUngoverned({ id = '', name = '', args = {} }, toolContext = {}) {
         const cancellationContext = toolContext.task || toolContext.signal;
         throwIfAskTaskCancelled(cancellationContext);
         const toolArgs = args && typeof args === 'object' ? args : {};
@@ -11972,6 +11972,138 @@ async function createDialog() {
                     errorMessage: error.message || '未知錯誤'
                 }, [`${error.name || 'Error'}: ${error.message || '未知錯誤'}`])
             };
+        }
+    }
+
+    async function executeToolCall(toolCall, toolContext = {}) {
+        const { id = '', name = '', args = {} } = toolCall || {};
+        const toolArgs = args && typeof args === 'object' ? args : {};
+        const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name, toolArgs) || null;
+        const governance = globalThis.AskPageToolGovernance;
+        const plan = governance?.planToolExecution?.(policy, {
+            mode: toolContext.governanceMode
+        }) || {
+            mode: 'observe',
+            decision: 'allow',
+            requiresApproval: policy?.requiresExplicitApproval === true,
+            reason: 'governance-module-unavailable'
+        };
+
+        let approval = 'not-requested';
+        const startedAt = Date.now();
+
+        if (plan.decision === 'block') {
+            const result = {
+                id,
+                name,
+                result: createToolResult(false, `工具 ${name} 因缺少可用的治理政策而被阻擋。`, {
+                    governance: {
+                        risk: policy?.risk || 'unknown',
+                        mode: plan.mode,
+                        decision: plan.decision,
+                        reason: plan.reason
+                    }
+                })
+            };
+            toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+                id,
+                name,
+                policy,
+                plan,
+                approval: 'not-available',
+                outcome: 'blocked',
+                success: false,
+                durationMs: Date.now() - startedAt
+            }));
+            return result;
+        }
+
+        if (plan.decision === 'require-approval') {
+            if (typeof toolContext.requestToolApproval !== 'function') {
+                const result = {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 需要明確批准，但目前沒有 approval handler。`, {
+                        governance: {
+                            risk: policy?.risk || 'unknown',
+                            mode: plan.mode,
+                            decision: plan.decision,
+                            reason: plan.reason
+                        }
+                    })
+                };
+                toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+                    id,
+                    name,
+                    policy,
+                    plan,
+                    approval: 'unavailable',
+                    outcome: 'blocked',
+                    success: false,
+                    durationMs: Date.now() - startedAt
+                }));
+                return result;
+            }
+
+            const approvalResult = await toolContext.requestToolApproval({
+                id,
+                name,
+                args: toolArgs,
+                policy,
+                plan
+            });
+            approval = approvalResult === true || approvalResult?.approved === true
+                ? 'approved'
+                : 'denied';
+
+            if (approval !== 'approved') {
+                const result = {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 未獲批准，因此未執行。`, {
+                        governance: {
+                            risk: policy?.risk || 'unknown',
+                            mode: plan.mode,
+                            decision: plan.decision,
+                            approval
+                        }
+                    })
+                };
+                toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+                    id,
+                    name,
+                    policy,
+                    plan,
+                    approval,
+                    outcome: 'blocked',
+                    success: false,
+                    durationMs: Date.now() - startedAt
+                }));
+                return result;
+            }
+        }
+
+        let response;
+        let executionError = null;
+        try {
+            response = await executeToolCallUngoverned(toolCall, toolContext);
+            return response;
+        } catch (error) {
+            executionError = error;
+            throw error;
+        } finally {
+            const success = response?.result?.success;
+            toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+                id,
+                name,
+                policy,
+                plan,
+                approval,
+                outcome: executionError ? 'error' : 'executed',
+                success: typeof success === 'boolean' ? success : null,
+                durationMs: Date.now() - startedAt,
+                error: executionError?.message || null
+            }));
         }
     }
 
