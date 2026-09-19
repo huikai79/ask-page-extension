@@ -21,6 +21,10 @@ assert.strictEqual(
   classifyToolCallRisk('type', { submit: false }),
   TOOL_RISK.REVERSIBLE_MUTATION
 );
+assert.strictEqual(
+  classifyToolCallRisk('fill_form_fields', { submit: true }),
+  TOOL_RISK.EXTERNAL_SIDE_EFFECT
+);
 assert.strictEqual(classifyToolRisk('does-not-exist'), TOOL_RISK.UNKNOWN);
 
 assert.strictEqual(requiresExplicitApproval(TOOL_RISK.READ_ONLY), false);
