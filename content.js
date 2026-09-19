@@ -11669,7 +11669,8 @@ async function createDialog() {
         const cancellationContext = toolContext.task || toolContext.signal;
         throwIfAskTaskCancelled(cancellationContext);
         const toolArgs = args && typeof args === 'object' ? args : {};
-        console.log('[AskPage] Executing tool:', name, toolArgs);
+        const toolPolicy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name, toolArgs) || null;
+        console.log('[AskPage] Executing tool:', name, toolArgs, toolPolicy ? { risk: toolPolicy.risk } : '');
 
         if (toolArgs._parseError) {
             return {
@@ -11975,9 +11976,20 @@ async function createDialog() {
     }
 
     function getToolDefinitionsForRequest({ includePageTools = true, includeWebSearch = false } = {}) {
-        const tools = includePageTools ? getToolDefinitions() : [];
+        const annotateRisk = (tool) => {
+            const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(tool.name);
+            if (!policy) {
+                return tool;
+            }
+            return {
+                ...tool,
+                description: `[tool-risk: ${policy.risk}] ${tool.description}`
+            };
+        };
+
+        const tools = includePageTools ? getToolDefinitions().map(annotateRisk) : [];
         if (includeWebSearch) {
-            tools.push(getWebSearchToolDefinition());
+            tools.push(annotateRisk(getWebSearchToolDefinition()));
         }
         return tools;
     }
