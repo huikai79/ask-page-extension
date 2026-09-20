@@ -12195,7 +12195,10 @@ async function createDialog() {
     function getGeminiToolDefinitions(model = '', includePageTools = false, googleSearchEnabled = false) {
         const pageTools = includePageTools
             ? [{
-                functionDeclarations: getToolDefinitions().map((tool) => ({
+                functionDeclarations: getToolDefinitionsForRequest({
+                    includePageTools: true,
+                    includeWebSearch: false
+                }).map((tool) => ({
                     name: tool.name,
                     description: tool.description,
                     parameters: tool.parameters
