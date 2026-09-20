@@ -11978,15 +11978,29 @@ async function createDialog() {
     async function executeToolCall(toolCall, toolContext = {}) {
         const { id = '', name = '', args = {} } = toolCall || {};
         const toolArgs = args && typeof args === 'object' ? args : {};
-        const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name, toolArgs) || null;
         const governance = globalThis.AskPageToolGovernance;
+        const requestedMode = governance?.normalizeGovernanceMode?.(toolContext.governanceMode)
+            || (toolContext.governanceMode === 'enforce' ? 'enforce' : 'observe');
+        const approvedArgs = governance?.snapshotToolArguments?.(toolArgs) || toolArgs;
+        const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name, approvedArgs) || null;
         const plan = governance?.planToolExecution?.(policy, {
-            mode: toolContext.governanceMode
+            mode: requestedMode
         }) || {
-            mode: 'observe',
-            decision: 'allow',
-            requiresApproval: policy?.requiresExplicitApproval === true,
+            mode: requestedMode,
+            decision: requestedMode === 'enforce' ? 'block' : 'allow',
+            requiresApproval: requestedMode === 'enforce' || policy?.requiresExplicitApproval === true,
             reason: 'governance-module-unavailable'
+        };
+
+        const emitAudit = (record) => {
+            if (!record || typeof toolContext.onToolAudit !== 'function') {
+                return;
+            }
+            try {
+                toolContext.onToolAudit(record);
+            } catch (auditError) {
+                console.warn('[AskPage] Tool audit callback failed:', auditError);
+            }
         };
 
         let approval = 'not-requested';
@@ -12005,7 +12019,7 @@ async function createDialog() {
                     }
                 })
             };
-            toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+            emitAudit(governance?.buildToolAuditRecord?.({
                 id,
                 name,
                 policy,
@@ -12032,7 +12046,7 @@ async function createDialog() {
                         }
                     })
                 };
-                toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+                emitAudit(governance?.buildToolAuditRecord?.({
                     id,
                     name,
                     policy,
@@ -12048,7 +12062,7 @@ async function createDialog() {
             const approvalResult = await toolContext.requestToolApproval({
                 id,
                 name,
-                args: toolArgs,
+                args: approvedArgs,
                 policy,
                 plan
             });
@@ -12069,7 +12083,7 @@ async function createDialog() {
                         }
                     })
                 };
-                toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+                emitAudit(governance?.buildToolAuditRecord?.({
                     id,
                     name,
                     policy,
@@ -12086,14 +12100,17 @@ async function createDialog() {
         let response;
         let executionError = null;
         try {
-            response = await executeToolCallUngoverned(toolCall, toolContext);
+            response = await executeToolCallUngoverned({
+                ...toolCall,
+                args: approvedArgs
+            }, toolContext);
             return response;
         } catch (error) {
             executionError = error;
             throw error;
         } finally {
             const success = response?.result?.success;
-            toolContext.onToolAudit?.(governance?.buildToolAuditRecord?.({
+            emitAudit(governance?.buildToolAuditRecord?.({
                 id,
                 name,
                 policy,
