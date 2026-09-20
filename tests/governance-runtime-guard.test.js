@@ -44,3 +44,19 @@ assert.ok(
   source.includes("缺少執行前 target/precondition 驗證，因此未執行"),
   'missing precondition validation must fail closed'
 );
+
+
+assert.ok(
+  source.includes("awaitWithAskTaskCancellation(\n                    toolContext.requestToolApproval"),
+  'approval callback must be cancellation-aware'
+);
+
+assert.ok(
+  source.includes("awaitWithAskTaskCancellation(\n                    toolContext.validateToolPrecondition"),
+  'precondition callback must be cancellation-aware'
+);
+
+assert.ok(
+  source.includes("Async tool audit callback failed"),
+  'async audit callback rejection must be isolated from execution'
+);
