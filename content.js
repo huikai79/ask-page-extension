@@ -12059,13 +12059,42 @@ async function createDialog() {
                 return result;
             }
 
-            const approvalResult = await toolContext.requestToolApproval({
-                id,
-                name,
-                args: approvedArgs,
-                policy,
-                plan
-            });
+            let approvalResult;
+            try {
+                approvalResult = await toolContext.requestToolApproval({
+                    id,
+                    name,
+                    args: approvedArgs,
+                    policy,
+                    plan
+                });
+            } catch (approvalError) {
+                approval = 'error';
+                emitAudit(governance?.buildToolAuditRecord?.({
+                    id,
+                    name,
+                    policy,
+                    plan,
+                    approval,
+                    outcome: 'blocked',
+                    success: false,
+                    durationMs: Date.now() - startedAt,
+                    error: approvalError?.message || String(approvalError)
+                }));
+                return {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 的批准流程失敗，因此未執行。`, {
+                        governance: {
+                            risk: policy?.risk || 'unknown',
+                            mode: plan.mode,
+                            decision: plan.decision,
+                            approval
+                        }
+                    })
+                };
+            }
+
             approval = approvalResult === true || approvalResult?.approved === true
                 ? 'approved'
                 : 'denied';
