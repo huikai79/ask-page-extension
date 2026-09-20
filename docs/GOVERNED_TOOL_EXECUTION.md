@@ -62,7 +62,14 @@ When policy requires approval:
 1. the execution wrapper calls `toolContext.requestToolApproval`;
 2. missing approval handler blocks execution;
 3. denial blocks execution;
-4. only explicit approval continues into the existing tool implementation.
+4. approved arguments are immutable snapshots;
+5. `toolContext.validateToolPrecondition` must re-check the target/precondition after approval;
+6. missing, rejected, or failed precondition validation blocks execution;
+7. only then does execution continue into the existing tool implementation.
+
+### Post-approval precondition
+
+Approval is not assumed to freeze the page. DOM, navigation state, form state, or a referenced target may change between preview/approval and execution. The precondition callback exists to prevent an approved action from silently applying to a materially different target.
 
 A missing policy also blocks in enforce mode.
 
@@ -110,7 +117,7 @@ V3 provides the execution architecture and enforcement hook. **The existing UI s
 
 Therefore this version should not be described as “all high-impact actions require interactive confirmation” yet.
 
-That product behavior becomes true only after the UI/agent loop wires the approval callback and tests continuation/cancellation behavior.
+That product behavior becomes true only after the UI/agent loop wires both the approval and precondition callbacks and tests continuation/cancellation/target-change behavior.
 
 ## Regression requirements
 
