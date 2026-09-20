@@ -33,3 +33,14 @@ assert.ok(
   source.includes("functionDeclarations: getToolDefinitionsForRequest({"),
   'Gemini page tools must use risk-annotated definitions'
 );
+
+
+assert.ok(
+  source.includes("validateToolPrecondition"),
+  'enforce mode must revalidate target/preconditions after approval'
+);
+
+assert.ok(
+  source.includes("缺少執行前 target/precondition 驗證，因此未執行"),
+  'missing precondition validation must fail closed'
+);
