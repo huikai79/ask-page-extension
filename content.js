@@ -12124,6 +12124,99 @@ async function createDialog() {
                 }));
                 return result;
             }
+
+            if (typeof toolContext.validateToolPrecondition !== 'function') {
+                emitAudit(governance?.buildToolAuditRecord?.({
+                    id,
+                    name,
+                    policy,
+                    plan,
+                    approval,
+                    outcome: 'blocked',
+                    success: false,
+                    durationMs: Date.now() - startedAt,
+                    error: 'missing-precondition-validator'
+                }));
+                return {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 已獲批准，但缺少執行前 target/precondition 驗證，因此未執行。`, {
+                        governance: {
+                            risk: policy?.risk || 'unknown',
+                            mode: plan.mode,
+                            decision: plan.decision,
+                            approval,
+                            precondition: 'unavailable'
+                        }
+                    })
+                };
+            }
+
+            try {
+                const preconditionResult = await toolContext.validateToolPrecondition({
+                    id,
+                    name,
+                    args: approvedArgs,
+                    policy,
+                    plan,
+                    approvalResult
+                });
+                const valid =
+                    preconditionResult === true ||
+                    preconditionResult?.valid === true;
+
+                if (!valid) {
+                    emitAudit(governance?.buildToolAuditRecord?.({
+                        id,
+                        name,
+                        policy,
+                        plan,
+                        approval,
+                        outcome: 'blocked',
+                        success: false,
+                        durationMs: Date.now() - startedAt,
+                        error: 'precondition-rejected'
+                    }));
+                    return {
+                        id,
+                        name,
+                        result: createToolResult(false, `工具 ${name} 的 target/precondition 已改變或無法確認，因此未執行。`, {
+                            governance: {
+                                risk: policy?.risk || 'unknown',
+                                mode: plan.mode,
+                                decision: plan.decision,
+                                approval,
+                                precondition: 'rejected'
+                            }
+                        })
+                    };
+                }
+            } catch (preconditionError) {
+                emitAudit(governance?.buildToolAuditRecord?.({
+                    id,
+                    name,
+                    policy,
+                    plan,
+                    approval,
+                    outcome: 'blocked',
+                    success: false,
+                    durationMs: Date.now() - startedAt,
+                    error: preconditionError?.message || String(preconditionError)
+                }));
+                return {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 的執行前驗證失敗，因此未執行。`, {
+                        governance: {
+                            risk: policy?.risk || 'unknown',
+                            mode: plan.mode,
+                            decision: plan.decision,
+                            approval,
+                            precondition: 'error'
+                        }
+                    })
+                };
+            }
         }
 
         let response;
