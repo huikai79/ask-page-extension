@@ -5,6 +5,7 @@ const {
   GOVERNANCE_MODE,
   EXECUTION_DECISION,
   normalizeGovernanceMode,
+  snapshotToolArguments,
   planToolExecution,
   buildToolAuditRecord,
   shouldBlockWithoutApproval
@@ -55,3 +56,15 @@ assert.strictEqual(audit.approval, 'approved');
 assert.strictEqual(audit.success, true);
 
 console.log('tool-governance.test.js passed');
+
+
+{
+  const original = { code: 'before', nested: { value: 1 } };
+  const snapshot = snapshotToolArguments(original);
+  original.code = 'after';
+  original.nested.value = 2;
+  assert.strictEqual(snapshot.code, 'before');
+  assert.strictEqual(snapshot.nested.value, 1);
+  assert.strictEqual(Object.isFrozen(snapshot), true);
+  assert.strictEqual(Object.isFrozen(snapshot.nested), true);
+}
