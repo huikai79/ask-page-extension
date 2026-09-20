@@ -27,3 +27,9 @@ assert.ok(
 );
 
 console.log('governance-runtime-guard.test.js passed');
+
+
+assert.ok(
+  source.includes("functionDeclarations: getToolDefinitionsForRequest({"),
+  'Gemini page tools must use risk-annotated definitions'
+);
