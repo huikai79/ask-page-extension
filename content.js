@@ -11997,7 +11997,12 @@ async function createDialog() {
                 return;
             }
             try {
-                toolContext.onToolAudit(record);
+                const auditResult = toolContext.onToolAudit(record);
+                if (auditResult && typeof auditResult.catch === 'function') {
+                    auditResult.catch((auditError) => {
+                        console.warn('[AskPage] Async tool audit callback failed:', auditError);
+                    });
+                }
             } catch (auditError) {
                 console.warn('[AskPage] Tool audit callback failed:', auditError);
             }
@@ -12061,14 +12066,20 @@ async function createDialog() {
 
             let approvalResult;
             try {
-                approvalResult = await toolContext.requestToolApproval({
-                    id,
-                    name,
-                    args: approvedArgs,
-                    policy,
-                    plan
-                });
+                approvalResult = await awaitWithAskTaskCancellation(
+                    toolContext.requestToolApproval({
+                        id,
+                        name,
+                        args: approvedArgs,
+                        policy,
+                        plan
+                    }),
+                    toolContext.signal
+                );
             } catch (approvalError) {
+                if (isAskTaskCancellationError(approvalError)) {
+                    throw approvalError;
+                }
                 approval = 'error';
                 emitAudit(governance?.buildToolAuditRecord?.({
                     id,
@@ -12153,14 +12164,17 @@ async function createDialog() {
             }
 
             try {
-                const preconditionResult = await toolContext.validateToolPrecondition({
-                    id,
-                    name,
-                    args: approvedArgs,
-                    policy,
-                    plan,
-                    approvalResult
-                });
+                const preconditionResult = await awaitWithAskTaskCancellation(
+                    toolContext.validateToolPrecondition({
+                        id,
+                        name,
+                        args: approvedArgs,
+                        policy,
+                        plan,
+                        approvalResult
+                    }),
+                    toolContext.signal
+                );
                 const valid =
                     preconditionResult === true ||
                     preconditionResult?.valid === true;
@@ -12192,6 +12206,9 @@ async function createDialog() {
                     };
                 }
             } catch (preconditionError) {
+                if (isAskTaskCancellationError(preconditionError)) {
+                    throw preconditionError;
+                }
                 emitAudit(governance?.buildToolAuditRecord?.({
                     id,
                     name,
