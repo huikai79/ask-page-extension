@@ -196,6 +196,68 @@ function createContentScriptSandbox(documentRef, exportsExpression) {
     return sandbox.__testExports;
 }
 
+function createGovernedContentScriptSandbox(documentRef, exportsExpression, options = {}) {
+    const fs = require('fs');
+    const path = require('path');
+    const vm = require('vm');
+    const rootDir = path.resolve(__dirname, '..', '..');
+    const policySource = fs.readFileSync(path.join(rootDir, 'lib', 'tool-policy.js'), 'utf8');
+    const governanceSource = fs.readFileSync(path.join(rootDir, 'lib', 'tool-governance.js'), 'utf8');
+    const contentScript = fs.readFileSync(path.join(rootDir, 'content.js'), 'utf8');
+
+    const runtimeSendMessage = options.sendMessage || (async () => ({
+        success: true,
+        result: {
+            success: true,
+            message: 'ok',
+            data: {},
+            warnings: [],
+            matchedTargets: []
+        }
+    }));
+
+    const sandbox = {
+        console,
+        marked: {},
+        DOMPurify: { sanitize(value) { return value; } },
+        WeakRef,
+        AbortController,
+        setTimeout,
+        clearTimeout,
+        chrome: {
+            runtime: {
+                getURL(resourcePath) { return resourcePath; },
+                onMessage: { addListener() {} },
+                sendMessage: runtimeSendMessage
+            },
+            storage: {
+                local: {
+                    async get() { return {}; },
+                    async set() {}
+                }
+            }
+        },
+        document: documentRef,
+        window: {
+            location: documentRef.location,
+            innerWidth: 1280,
+            innerHeight: 800,
+            getComputedStyle(element) {
+                return element.styleState;
+            }
+        }
+    };
+
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(
+        `${policySource}\n${governanceSource}\n${contentScript}\nglobalThis.__testExports = ${exportsExpression};`,
+        sandbox,
+        { filename: 'governed-content.js' }
+    );
+    return sandbox.__testExports;
+}
+
 module.exports = {
     createTextNode,
     createElement,
@@ -204,5 +266,6 @@ module.exports = {
     walkElements,
     findElement,
     createDocument,
-    createContentScriptSandbox
+    createContentScriptSandbox,
+    createGovernedContentScriptSandbox
 };
