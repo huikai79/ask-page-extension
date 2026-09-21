@@ -11665,7 +11665,7 @@ async function createDialog() {
         });
     }
 
-    async function executeToolCall({ id = '', name = '', args = {} }, toolContext = {}) {
+    async function executeToolCallUngoverned({ id = '', name = '', args = {} }, toolContext = {}) {
         const cancellationContext = toolContext.task || toolContext.signal;
         throwIfAskTaskCancelled(cancellationContext);
         const toolArgs = args && typeof args === 'object' ? args : {};
@@ -11975,6 +11975,94 @@ async function createDialog() {
         }
     }
 
+    async function executeToolCall(toolCall, toolContext = {}) {
+        const { id = '', name = '', args = {} } = toolCall || {};
+        const governance = globalThis.AskPageToolGovernance;
+
+        if (typeof governance?.executeGovernedToolCall !== 'function') {
+            if (toolContext.governanceMode === 'enforce') {
+                return {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 因治理模組不可用而被阻擋。`, {
+                        governance: {
+                            risk: 'unknown',
+                            mode: 'enforce',
+                            decision: 'block',
+                            reason: 'governance-module-unavailable'
+                        }
+                    })
+                };
+            }
+            return executeToolCallUngoverned(toolCall, toolContext);
+        }
+
+        const buildBlockedResult = ({
+            id: blockedId,
+            name: blockedName,
+            policy,
+            plan,
+            approval,
+            precondition,
+            error
+        }) => {
+            let message = `工具 ${blockedName} 未執行。`;
+
+            if (plan?.decision === 'block') {
+                message = `工具 ${blockedName} 因缺少可用的治理政策而被阻擋。`;
+            } else if (approval === 'unavailable') {
+                message = `工具 ${blockedName} 需要明確批准，但目前沒有 approval handler。`;
+            } else if (approval === 'error') {
+                message = `工具 ${blockedName} 的批准流程失敗，因此未執行。`;
+            } else if (approval === 'denied') {
+                message = `工具 ${blockedName} 未獲批准，因此未執行。`;
+            } else if (precondition === 'unavailable') {
+                message = `工具 ${blockedName} 已獲批准，但缺少執行前 target/precondition 驗證，因此未執行。`;
+            } else if (precondition === 'rejected') {
+                message = `工具 ${blockedName} 的 target/precondition 已改變或無法確認，因此未執行。`;
+            } else if (precondition === 'error') {
+                message = `工具 ${blockedName} 的執行前驗證失敗，因此未執行。`;
+            }
+
+            return {
+                id: blockedId,
+                name: blockedName,
+                result: createToolResult(false, message, {
+                    governance: {
+                        risk: policy?.risk || 'unknown',
+                        mode: plan?.mode || 'observe',
+                        decision: plan?.decision || 'block',
+                        approval,
+                        precondition,
+                        error: error || null
+                    }
+                })
+            };
+        };
+
+        return governance.executeGovernedToolCall({
+            toolCall: {
+                ...toolCall,
+                args: args && typeof args === 'object' ? args : {}
+            },
+            mode: toolContext.governanceMode,
+            buildPolicy: (toolName, toolArgs) =>
+                globalThis.AskPageToolPolicy?.buildToolPolicy?.(
+                    toolName,
+                    toolArgs
+                ) || null,
+            requestApproval: toolContext.requestToolApproval,
+            validatePrecondition: toolContext.validateToolPrecondition,
+            execute: (approvedToolCall) =>
+                executeToolCallUngoverned(approvedToolCall, toolContext),
+            onAudit: toolContext.onToolAudit,
+            createBlockedResult: buildBlockedResult,
+            awaitWithCancellation: awaitWithAskTaskCancellation,
+            signal: toolContext.signal,
+            isCancellationError: isAskTaskCancellationError
+        });
+    }
+
     function getToolDefinitionsForRequest({ includePageTools = true, includeWebSearch = false } = {}) {
         const annotateRisk = (tool) => {
             const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(tool.name);
@@ -12017,7 +12105,10 @@ async function createDialog() {
     function getGeminiToolDefinitions(model = '', includePageTools = false, googleSearchEnabled = false) {
         const pageTools = includePageTools
             ? [{
-                functionDeclarations: getToolDefinitions().map((tool) => ({
+                functionDeclarations: getToolDefinitionsForRequest({
+                    includePageTools: true,
+                    includeWebSearch: false
+                }).map((tool) => ({
                     name: tool.name,
                     description: tool.description,
                     parameters: tool.parameters

@@ -108,7 +108,7 @@ jobs:
         done
 
         # 檢查函式庫檔案
-        LIBS=("lib/marked.min.js" "lib/purify.min.js" "lib/tool-policy.js")
+        LIBS=("lib/marked.min.js" "lib/purify.min.js" "lib/tool-policy.js" "lib/tool-governance.js")
         for lib in "${LIBS[@]}"; do
           if [ ! -f "$lib" ]; then
             echo "❌ 缺少函式庫檔案: $lib"

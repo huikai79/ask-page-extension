@@ -41,6 +41,7 @@
         "lib/katex/auto-render.min.js",
         "i18n.js",
         "lib/tool-policy.js",
+        "lib/tool-governance.js",
         "content.js"
       ]
     }
