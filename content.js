@@ -11977,290 +11977,90 @@ async function createDialog() {
 
     async function executeToolCall(toolCall, toolContext = {}) {
         const { id = '', name = '', args = {} } = toolCall || {};
-        const toolArgs = args && typeof args === 'object' ? args : {};
         const governance = globalThis.AskPageToolGovernance;
-        const requestedMode = governance?.normalizeGovernanceMode?.(toolContext.governanceMode)
-            || (toolContext.governanceMode === 'enforce' ? 'enforce' : 'observe');
-        const approvedArgs = governance?.snapshotToolArguments?.(toolArgs) || toolArgs;
-        const policy = globalThis.AskPageToolPolicy?.buildToolPolicy?.(name, approvedArgs) || null;
-        const plan = governance?.planToolExecution?.(policy, {
-            mode: requestedMode
-        }) || {
-            mode: requestedMode,
-            decision: requestedMode === 'enforce' ? 'block' : 'allow',
-            requiresApproval: requestedMode === 'enforce' || policy?.requiresExplicitApproval === true,
-            reason: 'governance-module-unavailable'
-        };
 
-        const emitAudit = (record) => {
-            if (!record || typeof toolContext.onToolAudit !== 'function') {
-                return;
+        if (typeof governance?.executeGovernedToolCall !== 'function') {
+            if (toolContext.governanceMode === 'enforce') {
+                return {
+                    id,
+                    name,
+                    result: createToolResult(false, `工具 ${name} 因治理模組不可用而被阻擋。`, {
+                        governance: {
+                            risk: 'unknown',
+                            mode: 'enforce',
+                            decision: 'block',
+                            reason: 'governance-module-unavailable'
+                        }
+                    })
+                };
             }
-            try {
-                const auditResult = toolContext.onToolAudit(record);
-                if (auditResult && typeof auditResult.catch === 'function') {
-                    auditResult.catch((auditError) => {
-                        console.warn('[AskPage] Async tool audit callback failed:', auditError);
-                    });
-                }
-            } catch (auditError) {
-                console.warn('[AskPage] Tool audit callback failed:', auditError);
+            return executeToolCallUngoverned(toolCall, toolContext);
+        }
+
+        const buildBlockedResult = ({
+            id: blockedId,
+            name: blockedName,
+            policy,
+            plan,
+            approval,
+            precondition,
+            error
+        }) => {
+            let message = `工具 ${blockedName} 未執行。`;
+
+            if (plan?.decision === 'block') {
+                message = `工具 ${blockedName} 因缺少可用的治理政策而被阻擋。`;
+            } else if (approval === 'unavailable') {
+                message = `工具 ${blockedName} 需要明確批准，但目前沒有 approval handler。`;
+            } else if (approval === 'error') {
+                message = `工具 ${blockedName} 的批准流程失敗，因此未執行。`;
+            } else if (approval === 'denied') {
+                message = `工具 ${blockedName} 未獲批准，因此未執行。`;
+            } else if (precondition === 'unavailable') {
+                message = `工具 ${blockedName} 已獲批准，但缺少執行前 target/precondition 驗證，因此未執行。`;
+            } else if (precondition === 'rejected') {
+                message = `工具 ${blockedName} 的 target/precondition 已改變或無法確認，因此未執行。`;
+            } else if (precondition === 'error') {
+                message = `工具 ${blockedName} 的執行前驗證失敗，因此未執行。`;
             }
-        };
 
-        let approval = 'not-requested';
-        const startedAt = Date.now();
-
-        if (plan.decision === 'block') {
-            const result = {
-                id,
-                name,
-                result: createToolResult(false, `工具 ${name} 因缺少可用的治理政策而被阻擋。`, {
+            return {
+                id: blockedId,
+                name: blockedName,
+                result: createToolResult(false, message, {
                     governance: {
                         risk: policy?.risk || 'unknown',
-                        mode: plan.mode,
-                        decision: plan.decision,
-                        reason: plan.reason
+                        mode: plan?.mode || 'observe',
+                        decision: plan?.decision || 'block',
+                        approval,
+                        precondition,
+                        error: error || null
                     }
                 })
             };
-            emitAudit(governance?.buildToolAuditRecord?.({
-                id,
-                name,
-                policy,
-                plan,
-                approval: 'not-available',
-                outcome: 'blocked',
-                success: false,
-                durationMs: Date.now() - startedAt
-            }));
-            return result;
-        }
+        };
 
-        if (plan.decision === 'require-approval') {
-            if (typeof toolContext.requestToolApproval !== 'function') {
-                const result = {
-                    id,
-                    name,
-                    result: createToolResult(false, `工具 ${name} 需要明確批准，但目前沒有 approval handler。`, {
-                        governance: {
-                            risk: policy?.risk || 'unknown',
-                            mode: plan.mode,
-                            decision: plan.decision,
-                            reason: plan.reason
-                        }
-                    })
-                };
-                emitAudit(governance?.buildToolAuditRecord?.({
-                    id,
-                    name,
-                    policy,
-                    plan,
-                    approval: 'unavailable',
-                    outcome: 'blocked',
-                    success: false,
-                    durationMs: Date.now() - startedAt
-                }));
-                return result;
-            }
-
-            let approvalResult;
-            try {
-                approvalResult = await awaitWithAskTaskCancellation(
-                    toolContext.requestToolApproval({
-                        id,
-                        name,
-                        args: approvedArgs,
-                        policy,
-                        plan
-                    }),
-                    toolContext.signal
-                );
-            } catch (approvalError) {
-                if (isAskTaskCancellationError(approvalError)) {
-                    throw approvalError;
-                }
-                approval = 'error';
-                emitAudit(governance?.buildToolAuditRecord?.({
-                    id,
-                    name,
-                    policy,
-                    plan,
-                    approval,
-                    outcome: 'blocked',
-                    success: false,
-                    durationMs: Date.now() - startedAt,
-                    error: approvalError?.message || String(approvalError)
-                }));
-                return {
-                    id,
-                    name,
-                    result: createToolResult(false, `工具 ${name} 的批准流程失敗，因此未執行。`, {
-                        governance: {
-                            risk: policy?.risk || 'unknown',
-                            mode: plan.mode,
-                            decision: plan.decision,
-                            approval
-                        }
-                    })
-                };
-            }
-
-            approval = approvalResult === true || approvalResult?.approved === true
-                ? 'approved'
-                : 'denied';
-
-            if (approval !== 'approved') {
-                const result = {
-                    id,
-                    name,
-                    result: createToolResult(false, `工具 ${name} 未獲批准，因此未執行。`, {
-                        governance: {
-                            risk: policy?.risk || 'unknown',
-                            mode: plan.mode,
-                            decision: plan.decision,
-                            approval
-                        }
-                    })
-                };
-                emitAudit(governance?.buildToolAuditRecord?.({
-                    id,
-                    name,
-                    policy,
-                    plan,
-                    approval,
-                    outcome: 'blocked',
-                    success: false,
-                    durationMs: Date.now() - startedAt
-                }));
-                return result;
-            }
-
-            if (typeof toolContext.validateToolPrecondition !== 'function') {
-                emitAudit(governance?.buildToolAuditRecord?.({
-                    id,
-                    name,
-                    policy,
-                    plan,
-                    approval,
-                    outcome: 'blocked',
-                    success: false,
-                    durationMs: Date.now() - startedAt,
-                    error: 'missing-precondition-validator'
-                }));
-                return {
-                    id,
-                    name,
-                    result: createToolResult(false, `工具 ${name} 已獲批准，但缺少執行前 target/precondition 驗證，因此未執行。`, {
-                        governance: {
-                            risk: policy?.risk || 'unknown',
-                            mode: plan.mode,
-                            decision: plan.decision,
-                            approval,
-                            precondition: 'unavailable'
-                        }
-                    })
-                };
-            }
-
-            try {
-                const preconditionResult = await awaitWithAskTaskCancellation(
-                    toolContext.validateToolPrecondition({
-                        id,
-                        name,
-                        args: approvedArgs,
-                        policy,
-                        plan,
-                        approvalResult
-                    }),
-                    toolContext.signal
-                );
-                const valid =
-                    preconditionResult === true ||
-                    preconditionResult?.valid === true;
-
-                if (!valid) {
-                    emitAudit(governance?.buildToolAuditRecord?.({
-                        id,
-                        name,
-                        policy,
-                        plan,
-                        approval,
-                        outcome: 'blocked',
-                        success: false,
-                        durationMs: Date.now() - startedAt,
-                        error: 'precondition-rejected'
-                    }));
-                    return {
-                        id,
-                        name,
-                        result: createToolResult(false, `工具 ${name} 的 target/precondition 已改變或無法確認，因此未執行。`, {
-                            governance: {
-                                risk: policy?.risk || 'unknown',
-                                mode: plan.mode,
-                                decision: plan.decision,
-                                approval,
-                                precondition: 'rejected'
-                            }
-                        })
-                    };
-                }
-            } catch (preconditionError) {
-                if (isAskTaskCancellationError(preconditionError)) {
-                    throw preconditionError;
-                }
-                emitAudit(governance?.buildToolAuditRecord?.({
-                    id,
-                    name,
-                    policy,
-                    plan,
-                    approval,
-                    outcome: 'blocked',
-                    success: false,
-                    durationMs: Date.now() - startedAt,
-                    error: preconditionError?.message || String(preconditionError)
-                }));
-                return {
-                    id,
-                    name,
-                    result: createToolResult(false, `工具 ${name} 的執行前驗證失敗，因此未執行。`, {
-                        governance: {
-                            risk: policy?.risk || 'unknown',
-                            mode: plan.mode,
-                            decision: plan.decision,
-                            approval,
-                            precondition: 'error'
-                        }
-                    })
-                };
-            }
-        }
-
-        let response;
-        let executionError = null;
-        try {
-            response = await executeToolCallUngoverned({
+        return governance.executeGovernedToolCall({
+            toolCall: {
                 ...toolCall,
-                args: approvedArgs
-            }, toolContext);
-            return response;
-        } catch (error) {
-            executionError = error;
-            throw error;
-        } finally {
-            const success = response?.result?.success;
-            emitAudit(governance?.buildToolAuditRecord?.({
-                id,
-                name,
-                policy,
-                plan,
-                approval,
-                outcome: executionError ? 'error' : 'executed',
-                success: typeof success === 'boolean' ? success : null,
-                durationMs: Date.now() - startedAt,
-                error: executionError?.message || null
-            }));
-        }
+                args: args && typeof args === 'object' ? args : {}
+            },
+            mode: toolContext.governanceMode,
+            buildPolicy: (toolName, toolArgs) =>
+                globalThis.AskPageToolPolicy?.buildToolPolicy?.(
+                    toolName,
+                    toolArgs
+                ) || null,
+            requestApproval: toolContext.requestToolApproval,
+            validatePrecondition: toolContext.validateToolPrecondition,
+            execute: (approvedToolCall) =>
+                executeToolCallUngoverned(approvedToolCall, toolContext),
+            onAudit: toolContext.onToolAudit,
+            createBlockedResult: buildBlockedResult,
+            awaitWithCancellation: awaitWithAskTaskCancellation,
+            signal: toolContext.signal,
+            isCancellationError: isAskTaskCancellationError
+        });
     }
 
     function getToolDefinitionsForRequest({ includePageTools = true, includeWebSearch = false } = {}) {
