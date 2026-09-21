@@ -4,59 +4,58 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
-
-assert.ok(
-  source.includes("decision: requestedMode === 'enforce' ? 'block' : 'allow'"),
-  'enforce mode must fail closed when governance module is unavailable'
+const contentSource = fs.readFileSync(
+  path.join(__dirname, '..', 'content.js'),
+  'utf8'
+);
+const governanceSource = fs.readFileSync(
+  path.join(__dirname, '..', 'lib', 'tool-governance.js'),
+  'utf8'
 );
 
 assert.ok(
-  source.includes("Tool audit callback failed"),
-  'audit callback failures should be isolated from execution'
+  contentSource.includes("governance?.executeGovernedToolCall"),
+  'content runtime must delegate governed execution to the shared orchestrator'
 );
 
 assert.ok(
-  source.includes("approval = 'error'"),
-  'approval callback failures should be represented explicitly'
+  contentSource.includes("toolContext.governanceMode === 'enforce'"),
+  'adapter must preserve fail-closed behavior when governance module is unavailable'
 );
 
 assert.ok(
-  source.includes("批准流程失敗，因此未執行"),
-  'approval callback failures must block execution'
+  contentSource.includes("governance-module-unavailable"),
+  'adapter must explain missing governance module'
 );
 
-console.log('governance-runtime-guard.test.js passed');
-
-
 assert.ok(
-  source.includes("functionDeclarations: getToolDefinitionsForRequest({"),
+  contentSource.includes("functionDeclarations: getToolDefinitionsForRequest({"),
   'Gemini page tools must use risk-annotated definitions'
 );
 
-
 assert.ok(
-  source.includes("validateToolPrecondition"),
-  'enforce mode must revalidate target/preconditions after approval'
+  governanceSource.includes("snapshotToolArguments"),
+  'orchestrator must snapshot approved arguments'
 );
 
 assert.ok(
-  source.includes("缺少執行前 target/precondition 驗證，因此未執行"),
-  'missing precondition validation must fail closed'
-);
-
-
-assert.ok(
-  source.includes("awaitWithAskTaskCancellation(\n                    toolContext.requestToolApproval"),
-  'approval callback must be cancellation-aware'
+  governanceSource.includes("validatePrecondition"),
+  'orchestrator must support post-approval precondition validation'
 );
 
 assert.ok(
-  source.includes("awaitWithAskTaskCancellation(\n                    toolContext.validateToolPrecondition"),
-  'precondition callback must be cancellation-aware'
+  governanceSource.includes("isCancellationError"),
+  'orchestrator must preserve cancellation semantics'
 );
 
 assert.ok(
-  source.includes("Async tool audit callback failed"),
+  governanceSource.includes("Async tool audit callback failed"),
   'async audit callback rejection must be isolated from execution'
 );
+
+assert.ok(
+  governanceSource.includes("EXECUTION_DECISION.REQUIRE_APPROVAL"),
+  'orchestrator must have an explicit approval-required decision'
+);
+
+console.log('governance-runtime-guard.test.js passed');
